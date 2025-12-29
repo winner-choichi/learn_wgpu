@@ -1,5 +1,6 @@
 use std::{env::Args, sync::Arc};
 
+use anyhow::Context;
 use env_logger::builder;
 use wgpu::wgc::command::bundle_ffi::wgpu_render_bundle_draw;
 #[cfg(target_arch = "wasm32")]
@@ -9,6 +10,7 @@ use winit::{
     event::{KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopClosed},
     keyboard::{KeyCode, PhysicalKey},
+    monitor::VideoModeHandle,
     window::Window,
 };
 
@@ -22,6 +24,7 @@ pub struct State {
     config: wgpu::SurfaceConfiguration,
     is_surface_configured: bool,
     window: Arc<Window>,
+    clear_color: wgpu::Color,
 }
 
 impl State {
@@ -81,6 +84,13 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        let clear_color = wgpu::Color {
+            r: 0.1,
+            g: 0.1,
+            b: 0.1,
+            a: 1.0,
+        };
+
         Ok(Self {
             surface,
             device,
@@ -88,6 +98,7 @@ impl State {
             config,
             is_surface_configured: false,
             window,
+            clear_color,
         })
     }
 
@@ -100,8 +111,46 @@ impl State {
         }
     }
 
-    pub fn render(&mut self) {
+    pub fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
+
+        if !self.is_surface_configured {
+            return Ok(());
+        }
+
+        let output = self.surface.get_current_texture()?;
+
+        let view = output
+            .texture
+            .create_view(&wgpu::wgt::TextureViewDescriptor::default());
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Render Encoder"),
+            });
+
+        {
+            let _render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+        }
+        self.queue.submit(std::iter::once(encoder.finish()));
+        output.present();
+
+        Ok(())
     }
 
     pub fn handle_key(&mut self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
@@ -109,6 +158,23 @@ impl State {
             (KeyCode::Escape, true) => event_loop.exit(),
             _ => {}
         }
+    }
+
+    pub fn handle_mouse_moved(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
+        let size = self.window.inner_size();
+        let r = position.x / size.width as f64;
+        let g = position.y / size.height as f64;
+
+        self.clear_color = wgpu::Color {
+            r,
+            g,
+            b: self.clear_color.b,
+            a: self.clear_color.a,
+        };
+    }
+
+    pub fn update(&mut self) {
+        // later
     }
 }
 
@@ -200,7 +266,19 @@ impl ApplicationHandler<State> for App {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
-            WindowEvent::RedrawRequested => state.render(),
+            WindowEvent::RedrawRequested => {
+                state.update();
+                match state.render() {
+                    Ok(_) => {}
+                    Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
+                        let size = state.window.inner_size();
+                        state.resize(size.width, size.height);
+                    }
+                    Err(e) => {
+                        log::error!("Unable to render {}", e);
+                    }
+                }
+            }
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -210,6 +288,7 @@ impl ApplicationHandler<State> for App {
                     },
                 ..
             } => state.handle_key(event_loop, code, key_state.is_pressed()),
+            WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved(position),
             _ => {}
         };
     }
