@@ -7,6 +7,7 @@ use wgpu::wgc::command::bundle_ffi::wgpu_render_bundle_draw;
 use winit::event_loop;
 use winit::{
     application::ApplicationHandler,
+    dpi::{LogicalPosition, PhysicalPosition, PhysicalSize},
     event::{KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, EventLoop, EventLoopClosed},
     keyboard::{KeyCode, PhysicalKey},
@@ -237,6 +238,7 @@ pub struct App {
     #[cfg(target_arch = "wasm32")]
     proxy: Option<winit::event_loop::EventLoopProxy<State>>,
     state: Option<State>,
+    state2: Option<State>,
 }
 
 impl App {
@@ -245,6 +247,7 @@ impl App {
         let proxy = Some(event_loop.create_proxy());
         Self {
             state: None,
+            state2: None,
             #[cfg(target_arch = "wasm32")]
             proxy,
         }
@@ -254,7 +257,14 @@ impl App {
 impl ApplicationHandler<State> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[allow(unused_mut)]
-        let mut window_attributes = Window::default_attributes();
+        let mut window_attributes = Window::default_attributes()
+            .with_title("안녕1")
+            .with_inner_size(PhysicalSize::new(800, 500))
+            .with_position(PhysicalPosition::new(0, 0));
+        let mut window_attributes2 = Window::default_attributes()
+            .with_title("안녕2")
+            .with_inner_size(PhysicalSize::new(800, 500))
+            .with_position(PhysicalPosition::new(800, 0));
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -272,10 +282,12 @@ impl ApplicationHandler<State> for App {
         }
 
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
+        let window2 = Arc::new(event_loop.create_window(window_attributes2).unwrap());
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.state = Some(pollster::block_on(State::new(window)).unwrap());
+            self.state2 = Some(pollster::block_on(State::new(window2)).unwrap());
         }
 
         #[cfg(target_arch = "wasm32")]
