@@ -2,7 +2,7 @@ use std::{env::Args, sync::Arc};
 
 use anyhow::Context;
 use env_logger::builder;
-use wgpu::wgc::command::bundle_ffi::wgpu_render_bundle_draw;
+use wgpu::{naga::back, wgc::command::bundle_ffi::wgpu_render_bundle_draw};
 #[cfg(target_arch = "wasm32")]
 use winit::event_loop;
 use winit::{
@@ -27,10 +27,11 @@ pub struct State {
     window: Arc<Window>,
     clear_color: wgpu::Color,
     render_pipeline: wgpu::RenderPipeline,
+    logging: bool,
 }
 
 impl State {
-    pub async fn new(window: Arc<Window>) -> anyhow::Result<Self> {
+    pub async fn new(window: Arc<Window>, logging: bool) -> anyhow::Result<Self> {
         let size = window.inner_size();
 
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -42,6 +43,21 @@ impl State {
         });
 
         let surface = instance.create_surface(window.clone()).unwrap();
+
+        if logging {
+            println!("=== All Supporting Backends ===");
+            println!("{:?}\n", wgpu::Backends::all());
+
+            println!("=== Available Adapters (GPUs) ===");
+            let adapters = instance.enumerate_adapters(wgpu::Backends::all());
+            for (i, adapter) in adapters.iter().enumerate() {
+                let info = adapter.get_info();
+                println!(
+                    "Adapter {}: {}\nBackend: {}",
+                    i, info.name, info.backend
+                );
+            }
+        }
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -152,6 +168,7 @@ impl State {
             window,
             clear_color,
             render_pipeline,
+            logging,
         })
     }
 
@@ -286,8 +303,8 @@ impl ApplicationHandler<State> for App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.state = Some(pollster::block_on(State::new(window)).unwrap());
-            self.state2 = Some(pollster::block_on(State::new(window2)).unwrap());
+            self.state = Some(pollster::block_on(State::new(window, true)).unwrap());
+            self.state2 = Some(pollster::block_on(State::new(window2, false)).unwrap());
         }
 
         #[cfg(target_arch = "wasm32")]
