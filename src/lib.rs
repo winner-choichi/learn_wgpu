@@ -1,8 +1,11 @@
-use std::{env::Args, sync::Arc};
+use std::{env::Args, process::exit, sync::Arc};
 
 use anyhow::Context;
 use env_logger::builder;
-use wgpu::{naga::back, wgc::command::bundle_ffi::wgpu_render_bundle_draw};
+use wgpu::{
+    SurfaceCapabilities, hal::DeviceError, naga::back,
+    wgc::command::bundle_ffi::wgpu_render_bundle_draw,
+};
 #[cfg(target_arch = "wasm32")]
 use winit::event_loop;
 use winit::{
@@ -27,7 +30,9 @@ pub struct State {
     window: Arc<Window>,
     clear_color: wgpu::Color,
     render_pipeline: wgpu::RenderPipeline,
+    custom_pipeline: wgpu::RenderPipeline,
     logging: bool,
+    mouse_position: Option<winit::dpi::PhysicalPosition<f64>>,
 }
 
 impl State {
@@ -42,7 +47,17 @@ impl State {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window.clone()).unwrap();
+        // let surface = match instance.create_surface(window.clone()) {
+        //     Ok(s) => s,
+        //     Err(e) => {
+        //         println!("Error: {}", e);
+        //         exit(0)
+        //     }
+        // };
+
+        let surface = instance
+            .create_surface(window.clone())
+            .context("에러 발생. 에러 코드는 못쓰나?")?;
 
         if logging {
             println!("=== All Supporting Backends ===");
@@ -52,10 +67,7 @@ impl State {
             let adapters = instance.enumerate_adapters(wgpu::Backends::all());
             for (i, adapter) in adapters.iter().enumerate() {
                 let info = adapter.get_info();
-                println!(
-                    "Adapter {}: {}\nBackend: {}",
-                    i, info.name, info.backend
-                );
+                println!("Adapter {}: {}\nBackend: {}", i, info.name, info.backend);
             }
         }
 
@@ -84,18 +96,36 @@ impl State {
 
         let surface_caps = surface.get_capabilities(&adapter);
 
-        let surface_format = surface_caps
-            .formats
-            .iter()
-            .find(|f| f.is_srgb())
-            .copied()
-            .unwrap_or(surface_caps.formats[0]);
+        let surface_format = if logging {
+            surface_caps
+                .formats
+                .iter()
+                .find(|f| f.is_srgb())
+                .copied()
+                .unwrap_or(surface_caps.formats[0])
+        } else {
+            surface_caps
+                .formats
+                .iter()
+                .find(|f| f.is_srgb())
+                .copied()
+                .unwrap_or(surface_caps.formats[0])
+        };
+
+        if logging {
+            println!("=== Surface Capabilities ===");
+
+            println!("Formats: {:?}", surface_caps.formats);
+            println!("Present Modes: {:?}", surface_caps.present_modes);
+            println!("Alpha Modes: {:?}", surface_caps.alpha_modes);
+        }
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface_format,
             width: size.width,
             height: size.height,
+            // present_mode: surface_caps.present_modes[0],
             present_mode: surface_caps.present_modes[0],
             alpha_mode: surface_caps.alpha_modes[0],
             view_formats: vec![],
@@ -159,6 +189,24 @@ impl State {
             cache: None,
         });
 
+        let custom_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Custom Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("custom_shader.wgsl").into()),
+        });
+
+        let custom_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Drawing Pipeline"),
+            layout: None,
+            vertex: (),
+            primitive: (),
+            depth_stencil: (),
+            multisample: (),
+            fragment: (),
+            multiview: (),
+            cache: (),
+        });
+
+        let mouse_position = None;
         Ok(Self {
             surface,
             device,
@@ -168,7 +216,9 @@ impl State {
             window,
             clear_color,
             render_pipeline,
+            custom_pipeline,
             logging,
+            mouse_position,
         })
     }
 
@@ -246,6 +296,10 @@ impl State {
         };
     }
 
+    pub fn handle_mouse_moved2(&mut self, position: winit::dpi::PhysicalPosition<f64>) {
+        self.mouse_position = Some(position);
+    }
+
     pub fn update(&mut self) {
         // later
     }
@@ -303,8 +357,20 @@ impl ApplicationHandler<State> for App {
 
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.state = Some(pollster::block_on(State::new(window, true)).unwrap());
-            self.state2 = Some(pollster::block_on(State::new(window2, false)).unwrap());
+            self.state = Some(match pollster::block_on(State::new(window, true)) {
+                Ok(state) => state,
+                Err(e) => {
+                    println!("Error: {}", e);
+                    exit(1)
+                }
+            });
+            self.state2 = Some(match pollster::block_on(State::new(window2, true)) {
+                Ok(state) => state,
+                Err(e) => {
+                    println!("Error: {}", e);
+                    exit(1)
+                }
+            });
         }
 
         #[cfg(target_arch = "wasm32")]
@@ -374,7 +440,9 @@ impl ApplicationHandler<State> for App {
                     },
                 ..
             } => state.handle_key(event_loop, code, key_state.is_pressed()),
-            WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved(position),
+            // WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved(position),
+            WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved2(position),
+            // WindowEvent::CursorMoved { position, .. } => {}
             _ => {}
         };
     }
