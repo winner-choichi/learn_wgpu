@@ -3,7 +3,9 @@ use std::{env::Args, process::exit, sync::Arc};
 use anyhow::Context;
 use env_logger::builder;
 use wgpu::{
-    SurfaceCapabilities, hal::DeviceError, naga::back,
+    SurfaceCapabilities,
+    hal::DeviceError,
+    naga::{self, back},
     wgc::command::bundle_ffi::wgpu_render_bundle_draw,
 };
 #[cfg(target_arch = "wasm32")]
@@ -197,13 +199,39 @@ impl State {
         let custom_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Drawing Pipeline"),
             layout: None,
-            vertex: (),
-            primitive: (),
-            depth_stencil: (),
-            multisample: (),
-            fragment: (),
-            multiview: (),
-            cache: (),
+            vertex: wgpu::VertexState {
+                module: &custom_shader,
+                entry_point: Some("vs_custom_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: Some(wgpu::Face::Back),
+                unclipped_depth: false,
+                polygon_mode: wgpu::PolygonMode::Fill,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &custom_shader,
+                entry_point: Some("fs_custom_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: config.format,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::all(),
+                })],
+            }),
+            multiview: None,
+            cache: None,
         });
 
         let mouse_position = None;
@@ -268,6 +296,9 @@ impl State {
             });
 
             render_pass.set_pipeline(&self.render_pipeline);
+            render_pass.draw(0..3, 0..1);
+
+            render_pass.set_pipeline(&self.custom_pipeline);
             render_pass.draw(0..3, 0..1);
         }
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -440,8 +471,8 @@ impl ApplicationHandler<State> for App {
                     },
                 ..
             } => state.handle_key(event_loop, code, key_state.is_pressed()),
-            // WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved(position),
-            WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved2(position),
+            WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved(position),
+            // WindowEvent::CursorMoved { position, .. } => state.handle_mouse_moved2(position),
             // WindowEvent::CursorMoved { position, .. } => {}
             _ => {}
         };
