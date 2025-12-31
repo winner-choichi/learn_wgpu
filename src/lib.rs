@@ -1,4 +1,4 @@
-use std::{clone, env::Args, sync::Arc};
+use std::{clone, env::Args, os::unix::raw::dev_t, sync::Arc};
 
 use anyhow::Context;
 use env_logger::builder;
@@ -50,28 +50,42 @@ impl Vertex {
 
 const VERTICES: &[Vertex] = &[
     Vertex {
-        position: [-0.0868241, 0.49240386, 0.0],
+        position: [-0.5, -0.5, 1.0],
         color: [0.5, 0.0, 0.5],
-    }, // A
+    },
     Vertex {
-        position: [-0.49513406, 0.06958647, 0.0],
+        position: [0.5, -0.5, 1.0],
         color: [0.5, 0.0, 0.5],
-    }, // B
+    },
     Vertex {
-        position: [-0.21918549, -0.44939706, 0.0],
+        position: [0.5, -0.5, 2.0],
         color: [0.5, 0.0, 0.5],
-    }, // C
+    },
     Vertex {
-        position: [0.35966998, -0.3473291, 0.0],
+        position: [-0.5, -0.5, 2.0],
         color: [0.5, 0.0, 0.5],
-    }, // D
+    },
     Vertex {
-        position: [0.44147372, 0.2347359, 0.0],
+        position: [-0.5, 0.5, 1.0],
         color: [0.5, 0.0, 0.5],
-    }, // E
+    },
+    Vertex {
+        position: [0.5, 0.5, 1.0],
+        color: [0.5, 0.0, 0.5],
+    },
+    Vertex {
+        position: [0.5, 0.5, 2.0],
+        color: [0.5, 0.0, 0.5],
+    },
+    Vertex {
+        position: [-0.5, 0.5, 2.0],
+        color: [0.5, 0.0, 0.5],
+    },
 ];
 
-const INDICES: &[u16] = &[0, 1, 4, 1, 2, 4, 2, 3, 4];
+const INDICES: &[u16] = &[
+    0, 2, 1, 3, 2, 0, 0, 1, 5, 1, 2, 6, 2, 3, 7, 3, 0, 4, 4, 5, 6, 6, 7, 4,
+];
 
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -86,6 +100,9 @@ pub struct State {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     num_indices: u32,
+
+    cube_rotation: f32,
+    rotated_vertices: Vec<Vertex>,
 }
 
 impl State {
@@ -113,7 +130,7 @@ impl State {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::POLYGON_MODE_LINE,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 required_limits: if cfg!(target_arch = "wasm32") {
                     wgpu::Limits::downlevel_webgl2_defaults()
@@ -187,9 +204,9 @@ impl State {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
+                cull_mode: None,
                 unclipped_depth: false,
-                polygon_mode: wgpu::PolygonMode::Fill,
+                polygon_mode: wgpu::PolygonMode::Line,
                 conservative: false,
             },
             depth_stencil: None,
@@ -216,6 +233,10 @@ impl State {
 
         let num_indices = INDICES.len() as u32;
 
+        let cube_rotation = 0.0;
+
+        let rotated_vertices = VERTICES.to_vec();
+
         Ok(Self {
             surface,
             device,
@@ -228,6 +249,8 @@ impl State {
             vertex_buffer,
             index_buffer,
             num_indices,
+            cube_rotation,
+            rotated_vertices,
         })
     }
 
@@ -276,8 +299,15 @@ impl State {
                 occlusion_query_set: None,
             });
 
+            let rotated_vertex_buffer =
+                self.device
+                    .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some("Vertex Buffer"),
+                        contents: &bytemuck::cast_slice(&self.rotated_vertices),
+                        usage: wgpu::BufferUsages::VERTEX,
+                    });
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            render_pass.set_vertex_buffer(0, rotated_vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
         }
@@ -308,7 +338,26 @@ impl State {
     }
 
     pub fn update(&mut self) {
-        // later
+        self.cube_rotation += 0.001;
+        let distance = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            % (1000 * 10)) as f32
+            / 1000.0;
+
+        let mut vertices = VERTICES.to_vec();
+        const PI: f32 = std::f32::consts::PI;
+        for v in &mut vertices {
+            let theta = 2.0 * PI * self.cube_rotation;
+            let x = v.position[0];
+            let z = v.position[2] - 1.5;
+            v.position[0] = x * theta.cos() + z * theta.sin();
+            // v.position[2] = x * -theta.sin() + z * theta.cos() + distance;
+            v.position[2] = x * -theta.sin() + z * theta.cos() + distance as f32;
+        }
+
+        self.rotated_vertices = vertices;
     }
 }
 
